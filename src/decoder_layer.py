@@ -14,33 +14,39 @@ class DecoderLayerV3(Layer):
                  de_dropout=01., 
                  use_masked_softmax=False,
                  row_mask_to_sero=False,
+                 use_bbmha=True,
                  debug=False, **kwargs):
         super(DecoderLayerV3, self).__init__(**kwargs)
         self.num_heads = num_heads
-        self.mha1 = MultiHeadAttentionV3(num_heads, d_model, 
-                                         use_masked_softmax=use_masked_softmax,
-                                         row_mask_to_sero=row_mask_to_sero,
-                                         debug=debug)  # Masked self-attention
-        self.mha2 = MultiHeadAttentionV3(num_heads, d_model, 
-                                         use_masked_softmax=use_masked_softmax,
-                                         row_mask_to_sero=row_mask_to_sero,
-                                         debug=debug)  # Encoder-decoder attention
+        self.debug = debug
+        if use_bbmha:
+            if self.debug: print('using bb mha')
+            self.mha1 = MultiHeadAttentionV3(num_heads, d_model, 
+                                             use_masked_softmax=use_masked_softmax,
+                                             row_mask_to_sero=row_mask_to_sero,
+                                             debug=debug)  # Masked self-attention
+            self.mha2 = MultiHeadAttentionV3(num_heads, d_model, 
+                                             use_masked_softmax=use_masked_softmax,
+                                             row_mask_to_sero=row_mask_to_sero,
+                                             debug=debug)  # Encoder-decoder attention
+        
+        else:
+            self.mha = tf.keras.layers.MultiHeadAttention(num_heads, key_dim=d_model)
+            if self.debug: print('using tf mha ')
         self.ffn = FeedForward(d_model, dff)
         self.add_norm1 = AddNorm(epsilon=epsilon)
         self.add_norm2 = AddNorm(epsilon=epsilon)
         self.add_norm3 = AddNorm(epsilon=epsilon)
         self.dropout1 = tf.keras.layers.Dropout(de_dropout)
         self.dropout2 = tf.keras.layers.Dropout(de_dropout)
-        self.dropout3 = tf.keras.layers.Dropout(de_dropout)
-        self.debug = debug
+        self.dropout3 = tf.keras.layers.Dropout(de_dropout)        
         self.supports_masking = True  # Declare that this layer supports masking
 
-    def call(self, x, enc_output, training, use_causal_mask=True):
-        if self.debug: print('start decoder masked multihead :')
+    def call(self, x, enc_output, training=False, use_causal_mask=True):
+        if self.debug: print('start decoder masked multihead :')            
         attn1 = self.mha1(x, x, x,
-                                               num_heads=self.num_heads,
-                                               use_causal_mask=use_causal_mask
-                                              )
+                           use_causal_mask=use_causal_mask
+                          )
         attn_weights_block1 = self.mha1.attention_weights
         attn1 = self.dropout1(attn1, training=training)
         if self.debug: print('attn1: ', attn1.shape)
@@ -51,9 +57,8 @@ class DecoderLayerV3(Layer):
         if self.debug: print('starting multihead for encoder_out: ')
         ### provide the encoder_mask
         # if self.debug: print('encoder_mask reshaped by decoder:', encoder_mask)
-        attn2 = self.mha2(out1, enc_output, enc_output, 
-                                               num_heads=self.num_heads,
-                                               use_causal_mask=use_causal_mask)
+        attn2 = self.mha2(out1, enc_output, enc_output,                                               
+                          use_causal_mask=use_causal_mask)
         attn_weights_block2 = self.mha2.attention_weights
         attn2 = self.dropout2(attn2, training=training)
         if self.debug: print('attn2: ', attn2.shape)

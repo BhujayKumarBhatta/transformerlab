@@ -103,7 +103,7 @@ class MultiHeadAttentionV3(Layer):
         v._keras_mask = xv_mask        
         attention_output = self.self_attention(q, k, v, mask=mask,
                                                use_causal_mask=use_causal_mask,
-                                              num_heads=num_heads)
+                                              num_heads=self.num_heads)
         attention_weights = self.self_attention.attention_weights
         # if self.debug: print('attention_output:', attention_output.shape)
         # Reshape attention_output back to the original multi-head shape for concatenation

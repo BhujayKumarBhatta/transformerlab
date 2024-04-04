@@ -5,7 +5,7 @@ from tensorflow.keras.layers import (
     Lambda, Layer, LayerNormalization, Dropout )
 
 from positional_encoding import PositionalEmbedding
-from encoder_layer import  EncoderLayerV2
+from encoder_layer import  EncoderLayerV2, 4EncoderLayerV5
 
 
 
@@ -19,6 +19,7 @@ class TransformerEncoderV3(Layer):
                  use_masked_softmax=False,
                  row_mask_to_sero=False,
                  debug=False,
+                 use_bbmha=True,
                  **kwargs):
         super(TransformerEncoderV3, self).__init__(**kwargs)
         self.debug = debug
@@ -29,31 +30,39 @@ class TransformerEncoderV3(Layer):
         self.positional_embedding = PositionalEmbedding(vocab_size, d_model, max_pos,
                                                         pos_dropout=pos_dropout,
                                                       )
-        self.enc_layers_0 = EncoderLayerV2(d_model, num_heads, dff, en_dropout, epsilon, 
-                                           use_masked_softmax=use_masked_softmax,
-                                              row_mask_to_sero=row_mask_to_sero,
-                                           debug=debug)
-        if num_layers > 1:
-            self.remaining_layers = num_layers - 1
-            self.enc_layers = [EncoderLayerV2(d_model, num_heads, dff, en_dropout, epsilon, 
-                                              use_masked_softmax=use_masked_softmax,
-                                              row_mask_to_sero=row_mask_to_sero,
-                                              debug=False ) for _ in range(self.remaining_layers)]
+        if use_bbmha:
+            if self.debug: print('using bb mha')
+            self.enc_layers_0 = EncoderLayerV5(d_model, num_heads, dff, en_dropout, epsilon, 
+                                               use_masked_softmax=use_masked_softmax,
+                                                  row_mask_to_sero=row_mask_to_sero,
+                                               debug=debug)
+            if num_layers > 1:
+                self.remaining_layers = num_layers - 1
+                self.enc_layers = [EncoderLayerV5(d_model, num_heads, dff, en_dropout, epsilon, 
+                                                  use_masked_softmax=use_masked_softmax,
+                                                  row_mask_to_sero=row_mask_to_sero,
+                                                  debug=False ) for _ in range(self.remaining_layers)]
+        else:
+            if self.debug: print('using tf mha')
+            self.enc_layers_0 = EncoderLayerV5(d_model, num_heads, dff, en_dropout, use_bbmha=True,)
+            if num_layers > 1:
+                self.remaining_layers = num_layers - 1
+                self.enc_layers = [EncoderLayerV5(
+                                    d_model, num_heads, dff, use_bbmha=True,) for _ in range(self.remaining_layers)]
         self.supports_masking = True  # Declare that this layer supports masking
         self.attention_weights = None    
 
 
-    def call(self, x, training, return_attention_weights=False):
+    def call(self, x, training=False, return_attention_weights=False):
         attention_weights = []
         # Apply positional embedding
         x = self.positional_embedding(x, training=training)        
-        if self.debug: print('num_heads at encoder call :', self.num_heads)
-        
-        x = self.enc_layers_0(x, training=training, num_heads=self.num_heads)
+        if self.debug: print('num_heads at encoder call :', self.num_heads)        
+        x = self.enc_layers_0(x, training=training)
         layer_attention_weights = self.enc_layers_0.attention_weights
         self.debug = False
         for i in range(self.remaining_layers):
-            x = self.enc_layers[i](x, training=training, num_heads=self.num_heads)
+            x = self.enc_layers[i](x, training=training)
             layer_attention_weights  = self.enc_layers[i].attention_weights
             if return_attention_weights:
                 attention_weights.append(layer_attention_weights)
