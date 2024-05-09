@@ -5,7 +5,7 @@ from tensorflow.keras.layers import (
     Lambda, Layer, LayerNormalization, Dropout )
 
 from positional_encoding import PositionalEmbedding
-from encoder_layer import  EncoderLayerV2, 4EncoderLayerV5
+from encoder_layer import  EncoderLayerV2, EncoderLayerV5
 
 
 
