@@ -21,29 +21,45 @@ args = parser.parse_args()
 # Initialize tokenizer
 tokenizer = BertTokenizer.from_pretrained(args.vocab_file, do_lower_case=args.do_lower_case)
 
-def create_training_instances(input_texts, tokenizer, max_seq_length, max_predictions_per_seq, dupe_factor, random_seed):
+def create_training_instances(input_texts, tokenizer, max_seq_length, max_predictions_per_seq, dupe_factor, random_seed, nsp_enabled):
     rng = random.Random(random_seed)
     instances = []
     
+    articles = [tokenizer.tokenize(article) for article in input_texts]
     for _ in range(dupe_factor):
-        for article in input_texts:
-            tokens = tokenizer.tokenize(article)
-            if len(tokens) > max_seq_length - 2:
-                tokens = tokens[:max_seq_length - 2]
-            tokens = ['[CLS]'] + tokens + ['[SEP]']
-            segment_ids = [0] * len(tokens)
+        for i in range(len(articles) - 1):
+            tokens_a = articles[i]
+            # Randomly decide if we should take the next sentence or a random one
+            if rng.random() > 0.5 or not nsp_enabled:
+                is_random_next = True
+                tokens_b = articles[rng.randint(0, len(articles) - 1)]
+            else:
+                is_random_next = False
+                tokens_b = articles[i + 1]
 
-            # Masking logic (here we just choose random tokens to mask)
-            masked_tokens, masked_labels = mask_tokens(tokens, tokenizer, max_predictions_per_seq, rng)
-            instance = {
-                'tokens': tokenizer.convert_tokens_to_ids(masked_tokens),
-                'segment_ids': segment_ids,
-                'masked_lm_positions': [pos for pos, label in enumerate(masked_labels) if label != -1],
-                'masked_lm_labels': [label for label in masked_labels if label != -1],
-                'is_random_next': False  # This needs real implementation if using NSP
-            }
-            instances.append(instance)
+            truncate_and_process(tokens_a, tokens_b, max_seq_length, tokenizer, max_predictions_per_seq, instances, rng, is_random_next)
     return instances
+
+def truncate_and_process(tokens_a, tokens_b, max_seq_length, tokenizer, max_predictions_per_seq, instances, rng, is_random_next):
+    # Truncate tokens_a and tokens_b if their combined length is too long
+    while len(tokens_a) + len(tokens_b) + 3 > max_seq_length:
+        if len(tokens_a) > len(tokens_b):
+            tokens_a.pop()
+        else:
+            tokens_b.pop()
+
+    tokens = ['[CLS]'] + tokens_a + ['[SEP]'] + tokens_b + ['[SEP]']
+    segment_ids = [0] * (len(tokens_a) + 2) + [1] * (len(tokens_b) + 1)
+    masked_tokens, masked_labels = mask_tokens(tokens, tokenizer, max_predictions_per_seq, rng)
+
+    instance = {
+        'tokens': tokenizer.convert_tokens_to_ids(masked_tokens),
+        'segment_ids': segment_ids,
+        'masked_lm_positions': [pos for pos, label in enumerate(masked_labels) if label != -1],
+        'masked_lm_labels': [label for label in masked_labels if label != -1],
+        'is_random_next': int(is_random_next)  # Cast boolean to int for TensorFlow compatibility
+    }
+    instances.append(instance)
 
 def mask_tokens(tokens, tokenizer, max_predictions_per_seq, rng):
     masked_tokens = tokens[:]
@@ -86,6 +102,6 @@ if __name__ == "__main__":
     input_texts = [line.strip() for line in open(args.input_text, 'r', encoding='utf-8') if line.strip()]
     instances = create_training_instances(
         input_texts, tokenizer, args.max_seq_length, args.max_predictions_per_seq,
-        args.dupe_factor, args.random_seed)
+        args.dupe_factor, args.random_seed, args.nsp)
     write_instances_to_tfrecord(instances, args.output_tfrecord)
     print(f"Processed {len(instances)} instances and saved to {args.output_tfrecord}")
