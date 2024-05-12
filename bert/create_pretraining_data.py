@@ -40,6 +40,32 @@ def create_training_instances(input_texts, tokenizer, max_seq_length, max_predic
             truncate_and_process(tokens_a, tokens_b, max_seq_length, tokenizer, max_predictions_per_seq, instances, rng, is_random_next)
     return instances
 
+
+def mask_tokens(tokens, tokenizer, max_predictions_per_seq, rng):
+    """Masks tokens and returns masked tokens and corresponding labels."""
+    output_tokens = tokens[:]
+    output_labels = [-1] * len(tokens)  # Initialize labels with -1 (no change)
+
+    # Determine which tokens can be masked
+    candidate_indices = [
+        i for i, token in enumerate(tokens) 
+        if token not in [tokenizer.cls_token, tokenizer.sep_token]
+    ]
+    rng.shuffle(candidate_indices)
+    num_masked = min(max_predictions_per_seq, len(candidate_indices) * 15 // 100)
+    
+    for index in candidate_indices[:num_masked]:
+        random_choice = rng.random()
+        # 80% replace with [MASK], 10% random token, 10% unchanged
+        if random_choice < 0.8:
+            output_tokens[index] = tokenizer.mask_token
+        elif random_choice < 0.9:
+            output_tokens[index] = random.choice(list(tokenizer.vocab.keys()))
+        
+        output_labels[index] = tokenizer.convert_tokens_to_ids(tokens[index])
+
+    return output_tokens, output_labels
+
 def truncate_and_process(tokens_a, tokens_b, max_seq_length, tokenizer, max_predictions_per_seq, instances, rng, is_random_next):
     # Truncate tokens_a and tokens_b if their combined length is too long
     while len(tokens_a) + len(tokens_b) + 3 > max_seq_length:
@@ -50,39 +76,21 @@ def truncate_and_process(tokens_a, tokens_b, max_seq_length, tokenizer, max_pred
 
     tokens = ['[CLS]'] + tokens_a + ['[SEP]'] + tokens_b + ['[SEP]']
     segment_ids = [0] * (len(tokens_a) + 2) + [1] * (len(tokens_b) + 1)
+
     masked_tokens, masked_labels = mask_tokens(tokens, tokenizer, max_predictions_per_seq, rng)
 
+    # Convert masked_tokens to IDs
+    token_ids = tokenizer.convert_tokens_to_ids(masked_tokens)  # Ensure this returns integers
+
     instance = {
-        'tokens': tokenizer.convert_tokens_to_ids(masked_tokens),
+        'tokens': token_ids,
         'segment_ids': segment_ids,
-        'masked_lm_positions': [pos for pos, label in enumerate(masked_labels) if label != -1],
+        'masked_lm_positions': [i for i, label in enumerate(masked_labels) if label != -1],
         'masked_lm_labels': [label for label in masked_labels if label != -1],
-        'is_random_next': int(is_random_next)  # Cast boolean to int for TensorFlow compatibility
+        'is_random_next': int(is_random_next)
     }
     instances.append(instance)
 
-def mask_tokens(tokens, tokenizer, max_predictions_per_seq, rng):
-    masked_tokens = tokens[:]
-    output_labels = [-1] * len(tokens)
-
-    # Choose tokens for masking
-    candidate_indices = [i for i, token in enumerate(tokens) if token not in ['[CLS]', '[SEP]']]
-    rng.shuffle(candidate_indices)
-    num_to_mask = min(max_predictions_per_seq, max(1, int(len(candidate_indices) * 0.15)))
-    masked_indices = candidate_indices[:num_to_mask]
-
-    for index in masked_indices:
-        # 80% of the time, replace with [MASK]
-        if rng.random() < 0.8:
-            masked_tokens[index] = tokenizer.mask_token
-        # 10% of the time, replace with random word
-        elif rng.random() < 0.9:
-            masked_tokens[index] = rng.choice(list(tokenizer.vocab.keys()))
-        # 10% of the time, keep the original
-        # (note: token is already the original; we do nothing here)
-        output_labels[index] = tokenizer.convert_tokens_to_ids(tokens[index])
-
-    return masked_tokens, output_labels
 
 def write_instances_to_tfrecord(instances, output_file):
     with tf.io.TFRecordWriter(output_file) as writer:
